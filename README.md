@@ -14,9 +14,12 @@ No IDFA, no App Tracking Transparency prompt and no third-party SDK are required
 2. User installs / opens your app
 3. App  ──POST /api/v1/attribution/mobile/init──▶  Bliz      (this demo)
 4. Bliz ──{ sid_token, tier }──────────────────▶  App
-5. App stores sid_token and passes it to your backend
-6. Backend ──POST /api/v1/attribution/events (blizid = sid_token)──▶ Bliz
+5. App stores sid_token
+6. App  ──POST /mobile/analytics/v1 (blizid = sid_token)──▶  Bliz   (screen views, taps, sign-ups, purchases)
 ```
+
+The SDK only needs two calls: `mobile/init` once to get the token, and `mobile/analytics/v1`
+for every later event while a token exists. Both use the public key.
 
 - **Matching window:** the app open must happen within **24 hours** of the link click, on
   the same device.
@@ -100,26 +103,56 @@ Native equivalents: iOS `UIScreen.main.bounds` / `.scale`; Android `WindowMetric
 `Display.getRealMetrics()` divided by `DisplayMetrics.density`; Flutter
 `view.physicalSize / view.devicePixelRatio`.
 
-## Using the token
+## Sending events
 
 In your real app, call `mobile/init` **once** on first launch and store `sid_token` securely
-(Keychain / Keystore). Then, from your **backend**, send events with your secret key:
+(Keychain / Keystore). If `sid_token` is not null, send every later event to
+`POST /mobile/analytics/v1` with the same public key. The demo has buttons for a screen view,
+a button tap and a purchase.
 
 ```bash
-curl -X POST "$BLIZ_API/api/v1/attribution/events" \
-  -H "Authorization: Bearer sk_live_YOUR_SECRET_KEY" \
+curl -X POST "$BLIZ_API/mobile/analytics/v1" \
+  -H "Authorization: Bearer pk_live_YOUR_PUBLIC_KEY" \
   -H "Content-Type: application/json" \
-  -d '{ "blizid": "<sid_token>", "event_source": "MOBILE", ... }'
+  -d '{
+    "blizid": "<sid_token>",
+    "stage": "CONVERT",
+    "source": "purchase",
+    "source_identifier": "checkout",
+    "source_location": "app://checkout",
+    "timestamp": "2026-11-13T14:30:00.000Z",
+    "event": "PURCHASE_COMPLETED",
+    "revenue": 49.99,
+    "currency": "USD",
+    "metadata": { "order_id": "ORD-1001" }
+  }'
 ```
 
-Refer to the Bliz API documentation for the complete event fields.
+| Field | Required | Notes |
+| :--- | :---: | :--- |
+| `blizid` | yes | The `sid_token` from `mobile/init` |
+| `stage` | yes | `VIEW` (screen), `ENGAGE` (tap), `SUBMITS` (form), `CONVERSION` (sign-up / lead), `CONVERT` (purchase) |
+| `source` | yes | `screen`, `link`, `button`, `form`, `purchase` or `conversion` |
+| `source_identifier` | yes | Screen name, button id or form id |
+| `source_location` | yes | Screen or deep link, e.g. `app://checkout` |
+| `timestamp` | yes | ISO 8601. Up to 7 days old (offline queue) and at most 5 minutes in the future |
+| `event` | no | For example `PURCHASE_COMPLETED`, `ORDER_CREATED` |
+| `revenue`, `currency` | no | Currency (3 letters) is required when revenue is sent |
+| `customer`, `metadata` | no | User id and extra business context |
+
+A successful call returns `{ "success": true, "status": "submitted" }`. Duplicate or rate-limited
+events return `"status": "ignored"`. Unknown fields are rejected, and the event source is always
+recorded as `MOBILE` by the server. Events from a weak (`prob_low`) match are recorded in Bliz but
+are not sent to ad platforms.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 | :--- | :--- |
 | `sid_token: null` | The link was not opened on this device within 24 hours, the key belongs to a different account than the link, or the click was already claimed by another device. |
-| HTTP 403 | Missing or invalid public key. Use a `pk_live_...` key, not `sk_live_...`. |
+| HTTP 403 | Missing or invalid public key. Use a `pk_live_...` key, not `sk_live_...`. On events, it can also mean the token belongs to another account. |
+| HTTP 401 on events | The `blizid` token is invalid or expired. |
+| HTTP 400 on events | A field failed validation (unknown field, bad `stage` / `source`) or the timestamp is outside the accepted window. |
 | Request failed | Wrong API URL for your device type (see API host tips). A real phone cannot reach `localhost`. |
 | Key field is empty | `.env` not loaded. Restart Expo with `--clear` and reopen the app. |
 

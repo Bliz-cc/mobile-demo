@@ -2,7 +2,8 @@
  * Bliz mobile attribution demo
  *
  * Shows how a mobile app calls `POST /api/v1/attribution/mobile/init` on first open
- * to find out which marketing link (if any) drove the install.
+ * to find out which marketing link (if any) drove the install, and then reports later
+ * in-app events to `POST /mobile/analytics/v1` while a token exists.
  *
  * Flow:
  *   1. The user taps a Bliz short link on this device (opens in the browser).
@@ -10,9 +11,9 @@
  *   3. The app sends device characteristics to Bliz (this file).
  *   4. Bliz answers with an encrypted `sid_token` (and a confidence `tier`) if it
  *      matched a recent click from this same device, or `null` for organic installs.
- *   5. The app stores `sid_token` and later passes it as `blizid` on in-app events
- *      (sign-up, purchase, ...) sent from your backend, so revenue is credited to the
- *      original link.
+ *   5. The app stores `sid_token` and passes it as `blizid` on every later event
+ *      (screen views, taps, sign-up, purchase, ...), so revenue is credited to the
+ *      original link. Use only the public key (pk_live_...) in the app.
  */
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
@@ -64,6 +65,8 @@ export default function App() {
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
   const [publicKey, setPublicKey] = useState(DEFAULT_PUBLIC_KEY);
   const [output, setOutput] = useState('');
+  // Token returned by mobile/init. In a real app, persist it (Keychain / Keystore / AsyncStorage).
+  const [sidToken, setSidToken] = useState<string | null>(null);
   const payload = buildInitPayload();
 
   /**
@@ -86,10 +89,76 @@ export default function App() {
       // Expected body: { "sid_token": "<encrypted token>" | null, "tier": "prob_high" | "prob_low" | null }
       const body = await response.text();
       setOutput(`HTTP ${response.status}\n${body}`);
+
+      // Keep the token so later events can be attributed to the original link.
+      const parsed = JSON.parse(body) as { sid_token?: string | null };
+      setSidToken(parsed.sid_token ?? null);
     } catch (error) {
       setOutput(`Request failed: ${String(error)}`);
     }
   };
+
+  /**
+   * Sends one event to `POST /mobile/analytics/v1`, only possible when `mobile/init`
+   * returned a token. Same field names as the Bliz web script:
+   *   stage              VIEW | ENGAGE | SUBMITS | CONVERSION | CONVERT
+   *   source             screen | link | button | form | purchase | conversion
+   *   source_identifier  screen name, button id or form id
+   *   source_location    screen or deep link, e.g. "app://checkout"
+   * The server always records event_source = MOBILE, so it is not sent.
+   */
+  const sendEvent = async (event: Record<string, unknown>) => {
+    if (!sidToken) {
+      setOutput('No sid_token yet. Call mobile/init first (organic installs return null).');
+      return;
+    }
+    setOutput('Sending event...');
+    try {
+      const response = await fetch(`${apiUrl}/mobile/analytics/v1`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${publicKey}`,
+        },
+        body: JSON.stringify({
+          blizid: sidToken,
+          timestamp: new Date().toISOString(),
+          ...event,
+        }),
+      });
+      setOutput(`HTTP ${response.status}\n${await response.text()}`);
+    } catch (error) {
+      setOutput(`Request failed: ${String(error)}`);
+    }
+  };
+
+  const sendScreenView = () =>
+    sendEvent({
+      stage: 'VIEW',
+      source: 'screen',
+      source_identifier: 'home',
+      source_location: 'app://home',
+    });
+
+  const sendButtonTap = () =>
+    sendEvent({
+      stage: 'ENGAGE',
+      source: 'button',
+      source_identifier: 'checkout_btn',
+      source_location: 'app://cart',
+    });
+
+  const sendPurchase = () =>
+    sendEvent({
+      stage: 'CONVERT',
+      source: 'purchase',
+      source_identifier: 'checkout',
+      source_location: 'app://checkout',
+      event: 'PURCHASE_COMPLETED',
+      revenue: 49.99,
+      currency: 'USD',
+      metadata: { order_id: `demo-${Date.now()}` },
+    });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -119,6 +188,28 @@ export default function App() {
 
         <TouchableOpacity style={styles.button} onPress={callMobileInit}>
           <Text style={styles.buttonText}>Call mobile/init</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.label}>
+          {sidToken ? 'Token received: events enabled' : 'Events need a token from mobile/init'}
+        </Text>
+        <TouchableOpacity
+          style={[styles.buttonSecondary, !sidToken && styles.buttonDisabled]}
+          onPress={sendScreenView}
+        >
+          <Text style={styles.buttonSecondaryText}>Send screen view (VIEW)</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buttonSecondary, !sidToken && styles.buttonDisabled]}
+          onPress={sendButtonTap}
+        >
+          <Text style={styles.buttonSecondaryText}>Send button tap (ENGAGE)</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buttonSecondary, !sidToken && styles.buttonDisabled]}
+          onPress={sendPurchase}
+        >
+          <Text style={styles.buttonSecondaryText}>Send purchase $49.99 (CONVERT)</Text>
         </TouchableOpacity>
 
         <View style={styles.outputBox}>
@@ -153,6 +244,16 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   buttonText: { color: '#fff', fontWeight: '600' },
+  buttonSecondary: {
+    borderWidth: 1,
+    borderColor: '#111',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  buttonSecondaryText: { color: '#111', fontWeight: '500' },
+  buttonDisabled: { opacity: 0.4 },
   outputBox: {
     borderWidth: 1,
     borderColor: '#ddd',
