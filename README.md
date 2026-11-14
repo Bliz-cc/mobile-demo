@@ -21,8 +21,11 @@ No IDFA, no App Tracking Transparency prompt and no third-party SDK are required
 The SDK only needs two calls: `mobile/init` once to get the token, and `mobile/analytics/v1`
 for every later event while a token exists. Both use the public key.
 
-- **Matching window:** the app open must happen within **24 hours** of the link click, on
-  the same device.
+- **Matching window:** a short, **24-hour** attribution window. The app open must happen within
+  24 hours of the link click, on the same device.
+- **What is used:** only publicly available device parameters (screen size and scale, timezone,
+  language, OS) plus the network of the request. No advertising ID (IDFA / GAID) and no
+  permission prompt.
 - **`tier`:** `prob_high` is a confident match; `prob_low` is a weaker match that Bliz
   records internally; `null` means no match (organic install).
 - **One click, one device:** a click can be claimed by a single device. Calling `mobile/init`

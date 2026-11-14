@@ -148,6 +148,24 @@ export default function App() {
       source_location: 'app://cart',
     });
 
+  const sendFormSubmit = () =>
+    sendEvent({
+      stage: 'SUBMITS',
+      source: 'form',
+      source_identifier: 'signup_form',
+      source_location: 'app://signup',
+    });
+
+  // Non-revenue conversion. APP_INSTALLED is recorded as an APP_INSTALL conversion.
+  const sendAppInstall = () =>
+    sendEvent({
+      stage: 'CONVERSION',
+      source: 'conversion',
+      source_identifier: 'first_open',
+      source_location: 'app://home',
+      event: 'APP_INSTALLED',
+    });
+
   const sendPurchase = () =>
     sendEvent({
       stage: 'CONVERT',
@@ -204,6 +222,18 @@ export default function App() {
           onPress={sendButtonTap}
         >
           <Text style={styles.buttonSecondaryText}>Send button tap (ENGAGE)</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buttonSecondary, !sidToken && styles.buttonDisabled]}
+          onPress={sendFormSubmit}
+        >
+          <Text style={styles.buttonSecondaryText}>Send form submit (SUBMITS)</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.buttonSecondary, !sidToken && styles.buttonDisabled]}
+          onPress={sendAppInstall}
+        >
+          <Text style={styles.buttonSecondaryText}>Send app install (CONVERSION)</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.buttonSecondary, !sidToken && styles.buttonDisabled]}
